@@ -8,6 +8,7 @@ import numpy as np
 import rospy
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog
+from detectron2 import model_zoo
 from cv_bridge import CvBridge, CvBridgeError
 # import some common detectron2 utilities
 from detectron2.engine import DefaultPredictor
@@ -30,12 +31,15 @@ class Detectron2node(object):
         self.cfg = get_cfg()
         self.cfg.merge_from_file(self.load_param('~config'))
         self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.load_param('~detection_threshold') # set threshold for this model
-        self.cfg.MODEL.WEIGHTS = self.load_param('~model')
+        self.cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(self.load_param('~model'))
+        # self.cfg.MODEL.WEIGHTS = self.load_param('~model')
         self.predictor = DefaultPredictor(self.cfg)
         self._class_names = MetadataCatalog.get(self.cfg.DATASETS.TRAIN[0]).get("thing_classes", None)
-
+        rospy.logerr(str(self._class_names))
+        rospy.logerr('len: ' + str(len(self._class_names)))
         self._visualization = self.load_param('~visualization',True)
         self._result_pub = rospy.Publisher('~result', Result, queue_size=1)
+        self._semantic_result_pub = rospy.Publisher('~semantic_result', Result, queue_size=1)
         self._vis_pub = rospy.Publisher('~visualization', Image, queue_size=1)
         self._sub = rospy.Subscriber(self.load_param('~input'), Image, self.callback_image, queue_size=1)
         self.start_time = time.time()
@@ -66,13 +70,14 @@ class Detectron2node(object):
                 result_msg = self.getResult(result)
 
                 self._result_pub.publish(result_msg)
+                v = Visualizer(np_image[:, :, ::-1], MetadataCatalog.get(self.cfg.DATASETS.TRAIN[0]), scale=1.2)
+                v, boxes, labels = v.draw_instance_predictions(outputs["instances"].to("cpu"))
 
+                # for b, l in zip(boxes, labels):
+                #     rospy.logerr(l + ": " + str(b))
                 # Visualize results
                 if self._visualization:
-                    v = Visualizer(np_image[:, :, ::-1], MetadataCatalog.get(self.cfg.DATASETS.TRAIN[0]), scale=1.2)
-                    v = v.draw_instance_predictions(outputs["instances"].to("cpu"))
                     img = v.get_image()[:, :, ::-1]
-
                     image_msg = self._bridge.cv2_to_imgmsg(img)
                     self._vis_pub.publish(image_msg)
 
@@ -82,10 +87,10 @@ class Detectron2node(object):
 
         boxes = predictions.pred_boxes if predictions.has("pred_boxes") else None
 
-        if predictions.has("pred_masks"):
-            masks = np.asarray(predictions.pred_masks)
-        else:
-            return
+        # if predictions.has("pred_masks"):
+        #     masks = np.asarray(predictions.pred_masks)
+        # else:
+        #     return
 
         result_msg = Result()
         result_msg.header = self._header
@@ -94,10 +99,10 @@ class Detectron2node(object):
         result_msg.scores = predictions.scores if predictions.has("scores") else None
 
         for i, (x1, y1, x2, y2) in enumerate(boxes):
-            mask = np.zeros(masks[i].shape, dtype="uint8")
-            mask[masks[i, :, :]]=255
-            mask = self._bridge.cv2_to_imgmsg(mask)
-            result_msg.masks.append(mask)
+            # mask = np.zeros(masks[i].shape, dtype="uint8")
+            # mask[masks[i, :, :]]=255
+            # mask = self._bridge.cv2_to_imgmsg(mask)
+            # result_msg.masks.append(mask)
 
             box = RegionOfInterest()
             box.x_offset = np.uint32(x1)
